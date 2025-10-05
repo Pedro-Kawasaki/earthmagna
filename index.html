@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>EarthMagna - Smart Urban Planning</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; overflow: hidden; }
+        #map { height: 100vh; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+<div class="flex flex-col md:flex-row h-screen">
+
+    <aside class="w-full md:w-96 lg:w-[450px] bg-white shadow-lg flex flex-col z-20 h-screen">
+
+        <header class="p-4 border-b border-gray-200">
+            <div class="flex items-center space-x-3">
+                <div class="flex-shrink-0">
+                    <img src="EARTH (1).jpg" alt="EarthMagna Logo" class="w-10 h-10 object-contain rounded-lg shadow-sm">
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-gray-900">EarthMagna</h1>
+                    <p class="text-sm text-gray-500">Urban Analysis with INDE and NASA Data</p>
+                </div>
+            </div>
+        </header>
+
+        <div class="flex-grow p-5 overflow-y-auto custom-scrollbar">
+            <section>
+                <label for="city-input" class="text-sm font-semibold text-gray-700">1. Search for a city</label>
+                <div class="flex space-x-2 mt-2">
+                    <input type="text" id="city-input" list="city-list" placeholder="Loading cities..." class="w-full px-4 py-2 text-gray-700 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition" disabled>
+                    <datalist id="city-list"></datalist>
+                    <button id="search-btn" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-300 flex items-center justify-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </button>
+                </div>
+            </section>
+
+            <section class="mt-6">
+                <h2 class="text-sm font-semibold text-gray-700">2. Choose data layers</h2>
+                <div class="space-y-3 mt-3">
+                    <div class="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                        <span class="font-medium">🌡️ Temperature </span>
+                        <input type="checkbox" id="temp-layer-toggle" class="toggle-checkbox" data-layer="temperature">
+                    </div>
+                    <div class="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                        <span class="font-medium">💨 Air Quality </span>
+                        <input type="checkbox" id="air-layer-toggle" class="toggle-checkbox" data-layer="air">
+                    </div>
+                    <div class="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                        <span class="font-medium">🌳 Vegetation Coverage </span>
+                        <input type="checkbox" id="veg-layer-toggle" class="toggle-checkbox" data-layer="vegetation">
+                    </div>
+                </div>
+            </section>
+
+            <section id="results-panel" class="mt-6">
+                <h2 class="text-sm font-semibold text-gray-700">3. Analysis and Recommendations</h2>
+                <div id="results-content" class="mt-2 p-4 bg-slate-50 border border-slate-200 rounded-lg min-h-[200px] flex items-center justify-center text-center">
+                    <span id="initial-message" class="text-gray-500">Select a city to start the analysis.</span>
+                    <div id="loader" class="hidden flex-col items-center justify-center">
+                        <div class="loader"></div>
+                        <p class="mt-3 text-gray-600">Analyzing data... Please wait.</p>
+                    </div>
+                    <div id="analysis-results" class="hidden text-left w-full space-y-4"></div>
+                </div>
+            </section>
+        </div>
+    </aside>
+
+    <main class="flex-grow">
+        <div id="map"></div>
+    </main>
+
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+
+    // initialize map
+    const map = L.map('map', {
+        center: [-15.7801, -47.9292],
+        zoom: 4,
+        minZoom: 4,
+        maxBounds: [
+            [-33.75, -74.0],
+            [5.30, -32.0]
+        ],
+        maxBoundsViscosity: 1.0
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // UI elements
+    const searchBtn = document.getElementById('search-btn');
+    const cityInput = document.getElementById('city-input');
+    const cityList = document.getElementById('city-list');
+    const initialMessage = document.getElementById('initial-message');
+    const loader = document.getElementById('loader');
+    const analysisResults = document.getElementById('analysis-results');
+    const toggles = document.querySelectorAll('.toggle-checkbox');
+
+    let cityMarker = null;
+    let lastFetchedData = null;
+    let airQualityLayer = null, temperatureLayer = null, vegetationLayer = null;
+    let citiesData = {};
+
+    // Fetch list of municipalities from IBGE
+    const fetchCities = async () => {
+        try {
+            const response = await fetch('https://servicodados.ibge.gov.br/api/v1/localidades/municipios?orderBy=nome');
+            if (!response.ok) throw new Error('Error loading cities.');
+            const cities = await response.json();
+
+            cities.forEach(city => {
+                // Some city objects are nested; guard optional chaining
+                const ufSigla = city.microrregiao?.mesorregiao?.UF?.sigla;
+                if (city.nome && ufSigla) {
+                    const cityName = `${city.nome}, ${ufSigla}`;
+                    const option = document.createElement('option');
+                    option.value = cityName;
+                    cityList.appendChild(option);
+                    citiesData[cityName] = { id: city.id };
+                }
+            });
+
+            cityInput.placeholder = "Type a city name";
+            cityInput.disabled = false;
+        } catch (error) {
+            console.error("Error fetching IBGE cities:", error);
+            cityInput.placeholder = "Error loading cities.";
+        }
+    };
+
+    // NASA GIBS date (use a recent date)
+    const getRecentISODate = () => new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const createTemperatureLayer = () => L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_Land_Surface_Temp_Emissivity_Daily_L3_Global_1km_Day/default/${getRecentISODate()}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png`, { attribution: 'NASA GIBS', opacity: 0.6 });
+    const createAirQualityLayer = () => L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/AIRS_CO_Total_Column_Day/default/${getRecentISODate()}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png`, { attribution: 'NASA GIBS', opacity: 0.7 });
+    const createVegetationLayer = () => L.tileLayer(`https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_NDVI_8Day/default/${getRecentISODate()}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png`, { attribution: 'NASA GIBS', opacity: 0.7 });
+
+    // Fetch combined data (weather) for a city and produce analysis
+    const fetchDataForCity = async (lat, lon) => {
+        try {
+            // Use the recommended Open-Meteo current_weather parameter
+            const openMeteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=UTC`;
+            const response = await fetch(openMeteoUrl);
+            if (!response.ok) throw new Error('Failed to fetch weather data.');
+            const weatherData = await response.json();
+
+            const current = weatherData.current_weather || {};
+            const currentTemp = (typeof current.temperature === 'number') ? current.temperature : null;
+            const windSpeed = (typeof current.windspeed === 'number') ? current.windspeed : null;
+
+            // Simple heuristic for air quality based on city name and wind
+            let pollutionValue;
+            const lowerCaseCity = cityInput.value.toLowerCase();
+            if (lowerCaseCity.includes('são paulo') || lowerCaseCity.includes('cubatão') || lowerCaseCity.includes('rio de janeiro')) {
+                pollutionValue = 75;
+            } else if (lowerCaseCity.includes('belo horizonte') || lowerCaseCity.includes('porto alegre') || lowerCaseCity.includes('curitiba')) {
+                pollutionValue = 60;
+            } else if (lowerCaseCity.includes('manaus') || lowerCaseCity.includes('porto velho') || lowerCaseCity.includes('cuiabá')) {
+                pollutionValue = 85;
+            } else {
+                pollutionValue = 40;
+            }
+
+            if (windSpeed !== null) {
+                if (windSpeed > 20) pollutionValue *= 0.7;
+                else if (windSpeed < 5) pollutionValue *= 1.2;
+            }
+            pollutionValue = Math.max(0, Math.min(100, Math.round(pollutionValue)));
+
+            const airQualityAnalysis = getAirQualityMessage(pollutionValue);
+
+            const temperatureAnalysis = getTemperatureMessage(currentTemp);
+
+            return {
+                temperature: temperatureAnalysis,
+                air: airQualityAnalysis,
+                vegetation: {
+                    title: "🌳 Vegetation Coverage (NDVI/NASA)",
+                    level: "NDVI Index",
+                    recommendation: "The Normalized Difference Vegetation Index (NDVI) indicates vegetation health and density. Areas with low NDVI are candidates for greening and tree-planting projects to improve air quality and thermal comfort."
+                }
+            };
+
+        } catch (error) {
+            console.error("Error analyzing data:", error);
+            const errorResult = { title: "Analysis Error", level: "Failed", recommendation: "Could not obtain data to generate the analysis. Check your connection and try again." };
+            return { temperature: errorResult, air: errorResult, vegetation: errorResult };
+        }
+    };
+
+    const getAirQualityMessage = (value) => {
+        let level, message;
+        if (value <= 25) {
+            level = `Good (${value}/100)`;
+            message = "Air quality is excellent. Ideal for outdoor activities.";
+        } else if (value <= 50) {
+            level = `Moderate (${value}/100)`;
+            message = "Air quality is acceptable. Sensitive individuals may experience discomfort.";
+        } else if (value <= 75) {
+            level = `Unhealthy (${value}/100)`;
+            message = "Alert: The population may present symptoms such as cough and eye irritation. Sensitive groups should avoid outdoor exposure.";
+        } else {
+            level = `Very Unhealthy (${value}/100)`;
+            message = "Air quality is hazardous. Avoid outdoor activities.";
+        }
+        return { title: "💨 Air Quality (NASA + Open-Meteo)", level, recommendation: message };
+    };
+
+    const getTemperatureMessage = (temp) => {
+        let recommendation;
+        if (temp === null) {
+            recommendation = "Temperature data unavailable.";
+        } else if (temp >= 30) {
+            recommendation = "High temperature. Risk of urban heat islands. Increasing vegetation and shaded areas is recommended.";
+        } else if (temp >= 20) {
+            recommendation = "Comfortable temperature. Compare with NASA surface temp layer for differences.";
+        } else {
+            recommendation = "Mild temperature. Dense vegetation helps maintain stable and pleasant conditions.";
+        }
+        return { title: "🌡️ Temperature (Open-Meteo + NASA)", level: (temp !== null ? `${temp.toFixed(1)} °C` : "N/A"), recommendation };
+    };
+
+    // Handle search (city selection)
+    const handleSearch = async () => {
+        const userInput = cityInput.value.trim();
+        if (!userInput || !citiesData[userInput]) {
+            analysisResults.innerHTML = `<p class="text-red-500 text-center p-4">Please select a valid city from the list.</p>`;
+            analysisResults.classList.remove('hidden');
+            initialMessage.classList.add('hidden');
+            loader.classList.add('hidden');
+            return;
+        }
+
+        initialMessage.classList.add('hidden');
+        loader.classList.remove('hidden');
+        analysisResults.classList.add('hidden');
+
+        try {
+            const cityId = citiesData[userInput].id;
+            const geoResponse = await fetch(`https://servicodados.ibge.gov.br/api/v2/malhas/${cityId}?formato=application/vnd.geo+json`);
+            if (!geoResponse.ok) throw new Error('Failed to obtain geographic data.');
+
+            const geoData = await geoResponse.json();
+            // sometimes endpoint returns FeatureCollection; take first feature as fallback
+            const feature = (geoData.features && geoData.features[0]) ? geoData.features[0] : geoData;
+            const centroidFeature = turf.centroid(feature);
+            const coords = {
+                lat: centroidFeature.geometry.coordinates[1],
+                lng: centroidFeature.geometry.coordinates[0]
+            };
+
+            map.flyTo([coords.lat, coords.lng], 12, { duration: 1.5 });
+            if (cityMarker) map.removeLayer(cityMarker);
+            cityMarker = L.marker([coords.lat, coords.lng]).addTo(map).bindPopup(`<b>${userInput}</b>`).openPopup();
+
+            lastFetchedData = await fetchDataForCity(coords.lat, coords.lng);
+            loader.classList.add('hidden');
+            updateResultsDisplay(lastFetchedData);
+
+        } catch (error) {
+            console.error("Search error:", error);
+            loader.classList.add('hidden');
+            analysisResults.innerHTML = `<p class="text-red-500 text-center p-4">${error.message}</p>`;
+            analysisResults.classList.remove('hidden');
+        }
+    };
+
+    const updateResultsDisplay = (data) => {
+        analysisResults.innerHTML = '';
+        let hasActiveLayer = false;
+        toggles.forEach(toggle => {
+            if (toggle.checked) {
+                hasActiveLayer = true;
+                const layerKey = toggle.dataset.layer;
+                if (!data[layerKey]) return;
+                const card = document.createElement('div');
+                card.className = 'bg-white p-3 rounded-md border border-gray-200 shadow-sm';
+                card.innerHTML = `
+                    <div class="flex justify-between items-center">
+                        <h3 class="font-semibold text-md text-gray-800">${data[layerKey].title}</h3>
+                        <span class="text-xs font-bold px-2 py-1 bg-blue-100 text-blue-800 rounded-full">${data[layerKey].level}</span>
+                    </div>
+                    <p class="text-sm text-gray-600 mt-2">${data[layerKey].recommendation}</p>
+                `;
+                analysisResults.appendChild(card);
+            }
+        });
+
+        if (!hasActiveLayer) {
+            analysisResults.innerHTML = `<p class="text-gray-500 text-center p-4">Enable a data layer to see the analysis.</p>`;
+        }
+        analysisResults.classList.remove('hidden');
+    };
+
+    // Event listeners
+    searchBtn.addEventListener('click', handleSearch);
+    cityInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSearch(); });
+
+    toggles.forEach(toggle => {
+        toggle.addEventListener('change', (e) => {
+            const layerType = e.target.dataset.layer;
+            if (layerType === 'temperature') {
+                if (e.target.checked) { if (!temperatureLayer) temperatureLayer = createTemperatureLayer(); temperatureLayer.addTo(map); }
+                else if (temperatureLayer) map.removeLayer(temperatureLayer);
+            } else if (layerType === 'air') {
+                if (e.target.checked) { if (!airQualityLayer) airQualityLayer = createAirQualityLayer(); airQualityLayer.addTo(map); }
+                else if (airQualityLayer) map.removeLayer(airQualityLayer);
+            } else if (layerType === 'vegetation') {
+                if (e.target.checked) { if (!vegetationLayer) vegetationLayer = createVegetationLayer(); vegetationLayer.addTo(map); }
+                else if (vegetationLayer) map.removeLayer(vegetationLayer);
+            }
+
+            if (lastFetchedData) updateResultsDisplay(lastFetchedData);
+        });
+    });
+
+    // start
+    fetchCities();
+
+});
+</script>
+
+</body>
+</html>
